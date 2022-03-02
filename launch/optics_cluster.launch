@@ -1,0 +1,15 @@
+<launch>
+    <arg default="/gtec/mmwave/cloud" name="cloud_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/optics" name="publish_cluster_cloud_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/optics/centroids" name="publish_centroids_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/optics/pose" name="publish_pose_topic"></arg>
+
+    <node name="OpticsCluster" output="screen" pkg="gtec_mmwave_cluster" type="optics_cluster.py">
+        <param name="cloud_topic" value="$(arg cloud_topic)"></param>
+        <param name="publish_centroids_topic" value="$(arg publish_centroids_topic)"></param>
+        <param name="publish_cluster_cloud_topic" value="$(arg publish_cluster_cloud_topic)"></param>
+        <param name="publish_pose_topic" value="$(arg publish_pose_topic)"></param>
+    </node>
+
+    <node pkg="tf" type="static_transform_publisher" name="map_to_odom" args="0 0 0 0 0 0 map odom 30" />
+</launch>
