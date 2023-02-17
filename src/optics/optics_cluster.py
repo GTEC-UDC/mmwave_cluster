@@ -65,7 +65,7 @@ class TrackedObject(object):
     def get_pose_msg(self):
         poseMsg = PoseWithCovarianceStamped()
         poseMsg.header.stamp = rospy.Time.now()
-        poseMsg.header.frame_id = "odom"
+        poseMsg.header.frame_id = "radar"
         poseMsg.pose.pose.position.x = self.centroid[0]
         poseMsg.pose.pose.position.y = self.centroid[1]
         poseMsg.pose.pose.position.z = self.centroid[2]
