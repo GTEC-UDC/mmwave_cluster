@@ -83,24 +83,22 @@ class OpticsCluster(object):
     def __init__(self,
                  publisher_centroids_cloud,
                  publisher_cluster_cloud,
-                 count_window_frames,
                  publish_pose_topic_base,
-                 max_objects_tracked,
+                 window_time_in_ms,
+                 min_points_cluster, 
                  max_alive_without_measurements,
                  max_distance_to_consider_same_cluster
                  ):
         self.publisher_centroids_cloud = publisher_centroids_cloud
         self.publisher_cluster_cloud = publisher_cluster_cloud
-        self.count_window_frames = count_window_frames
-        self.current_frame = 0
-        self.min_points_cluster = 10
-
-        self.max_poses = max_objects_tracked
+        self.min_points_cluster = 5
         self.publishers_pose = []
         self.tracked_objects = []
-        self.last_time = rospy.get_rostime()
+        self.last_window_time_ms = -1
+        self.last_update_time_ms = -1
         self.max_alive = max_alive_without_measurements
         self.max_distance = max_distance_to_consider_same_cluster
+        self.window_time_in_ms = window_time_in_ms
 
         for index in range(max_objects_tracked):
             topic = publish_pose_topic_base+'/' + str(index)
@@ -109,48 +107,51 @@ class OpticsCluster(object):
             self.publishers_pose.append(pub)
 
     def loop(self):
-        current_time = rospy.get_rostime()
-        delta = current_time - self.last_time
-        self.last_time = current_time
-        for index in range(len(self.tracked_objects)):
-            (self.tracked_objects[index]).add_time(delta.to_sec())
+        current_time_ms = float(rospy.get_rostime().to_nsec())/1000000.0
+        if (current_time_ms>0):
+            if (self.last_window_time_ms<0):
+                self.last_window_time_ms = current_time_ms
+            
+            elapsed_in_ms = current_time_ms - self.last_window_time_ms
 
-        self.tracked_objects = [
-            i for i in self.tracked_objects if i.is_alive(self.max_alive)]
+            if elapsed_in_ms>=self.window_time_in_ms:
+                self.processWindow(elapsed_in_ms)
+                self.last_window_time_ms = current_time_ms
+                self.windowed_points_first = True
 
-        for index in range(len(self.tracked_objects)):
-            self.publish_pose(index, self.tracked_objects[index])
+            for index in range(len(self.tracked_objects)):
+                (self.tracked_objects[index]).add_time(elapsed_in_ms)
+
+            self.tracked_objects = [i for i in self.tracked_objects if i.is_alive(self.max_alive)]
+
+            for index in range(len(self.tracked_objects)):
+                self.publish_pose(index, self.tracked_objects[index])
+
+
 
     def publish_pose(self, index_tracked, tracked_object):
         msg = tracked_object.get_pose_msg()
         self.publishers_pose[index_tracked].publish(msg)
 
-    def point_cloud_listener(self, pointCloud):
-        if (self.current_frame == 0):
-            first = True
-            self.current_points = np.array([])
-        else:
-            first = False
 
-        for p in pc2.read_points(pointCloud, field_names=("x", "y", "z"), skip_nans=True):
-            if (first):
-                self.current_points = np.array([[p[0], p[1], p[2]]])
-                first = False
+    def addSingleCloud(self, cloud: PointCloud2)-> None:
+        for p in pc2.read_points(cloud, field_names=("x", "y", "z"), skip_nans=True):
+            if (self.windowed_points_first==True):
+                self.windowed_points = np.array([[p[0], p[1], p[2]]])
+                self.windowed_points_first = False
             else:
-                self.current_points = np.vstack(
-                    [self.current_points, [p[0], p[1], p[2]]])
+                self.windowed_points = np.vstack(
+                    [self.windowed_points, [p[0], p[1], p[2]]])
 
-        self.current_frame += 1
 
-        if (self.current_frame == self.count_window_frames):
-            self.current_frame = 0
-            print("Len point: " + str(len(self.current_points)))
-            if (len(self.current_points) >= self.min_points_cluster):
+    def processWindow(self, elapsed_time) -> None:
+        print("Len points: " + str(len(self.windowed_points)))
+        if (len(self.windowed_points) >= self.min_points_cluster):
                 model = OPTICS(min_samples=self.min_points_cluster,
                                min_cluster_size=0.05)
-                pred = model.fit_predict(self.current_points)
+                pred = model.fit_predict(self.windowed_points)
 
-                space = np.arange(len(self.current_points))
+                space = np.arange(len(self.windowed_points))
                 reachability = model.reachability_[model.ordering_]
                 labels = model.labels_[model.ordering_]
 
@@ -180,7 +181,7 @@ class OpticsCluster(object):
                 for i in range(len(clusters_ids)):
                     cluster_id = clusters_ids[i]
                     if cluster_id > -1:
-                        points_of_cluster = self.current_points[labels == cluster_id]
+                        points_of_cluster = self.windowed_points[labels == cluster_id]
                         centroid_of_cluster = np.mean(
                             points_of_cluster, axis=0)
                         centroids[i] = centroid_of_cluster
@@ -226,12 +227,12 @@ class OpticsCluster(object):
                     header_cloud, fields_cloud, points_centroid_cloud)
                 self.publisher_centroids_cloud.publish(centroids_cloud)
 
-                for i in range(len(self.current_points)):
+                for i in range(len(self.windowed_points)):
                     rgb = [0, 0, 0]
                     index_label = np.where(clusters_ids == labels[i])
                     if (index_label[0][0] < len(colors)):
                         rgb = colors[index_label[0][0]]
-                    pt = np.append(self.current_points[i], rgb)
+                    pt = np.append(self.windowed_points[i], rgb)
                     points_cluster_cloud.append(pt)
 
                 cluster_cloud = pc2.create_cloud(
@@ -255,11 +256,15 @@ if __name__ == "__main__":
     pub_cluster = rospy.Publisher(
         publish_cluster_topic, PointCloud2, queue_size=100)
 
-    max_tracked_objects = 8
-    window_size = 1
+    
+    min_points_cluster = 10
+    window_time_in_ms = 1000
+    max_target_alive_time_in_ms = 3000
+    max_distance_same_cluster_in_m = 0.5
 
     opticsCluster = OpticsCluster(
-        pub_centroids, pub_cluster, window_size, publish_pose_topic, max_tracked_objects, 10, 5.0)
+        pub_centroids, pub_cluster, publish_pose_topic, window_time_in_ms, min_points_cluster, max_target_alive_time_in_ms, max_distance_same_cluster_in_m)
+
     rospy.Subscriber(cloud_topic, PointCloud2,
                      opticsCluster.point_cloud_listener)
 
