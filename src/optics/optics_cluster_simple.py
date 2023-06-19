@@ -40,76 +40,30 @@ import numpy as np
 from mpl_toolkits.mplot3d import Axes3D
 
 
-class TrackedObject(object):
-    def __init__(self):
-        self.alive_time = 0.0
-        self.centroid = np.zeros(3)
-        self.covariance = np.zeros(36)
-
-    def add_time(self, time):
-        self.alive_time += time
-
-    def reset_time(self):
-        self.alive_time = 0.0
-
-    def update_position(self, centroid, covariance):
-        self.centroid = centroid
-        self.covariance = covariance
-
-    def is_alive(self, max_time):
-        return True if (self.alive_time <= max_time) else False
-
-    def get_centroid(self):
-        return self.centroid
-
-    def get_pose_msg(self):
-        poseMsg = PoseWithCovarianceStamped()
-        poseMsg.header.stamp = rospy.Time.now()
-        poseMsg.header.frame_id = "radar"
-        poseMsg.pose.pose.position.x = self.centroid[0]
-        poseMsg.pose.pose.position.y = self.centroid[1]
-        poseMsg.pose.pose.position.z = self.centroid[2]
-        poseMsg.pose.pose.orientation.w = 1.0
-        poseMsg.pose.pose.orientation.x = 0.0
-        poseMsg.pose.pose.orientation.y = 0.0
-        poseMsg.pose.pose.orientation.z = 0.0
-        cov = self.covariance
-        poseMsg.pose.covariance = list(cov)
-        return poseMsg
-
-
-class OpticsCluster(object):
+class OpticsClusterSimple(object):
 
     def __init__(self,
                  publisher_centroids_cloud,
                  publisher_cluster_cloud,
-                 publish_pose_topic_base,
                  window_time_in_ms,
-                 min_points_cluster, 
-                 max_alive_without_measurements,
+                 min_samples_to_be_core_point, 
+                 min_samples_in_cluster,
                  max_distance_to_consider_same_cluster
                  ):
         self.publisher_centroids_cloud = publisher_centroids_cloud
         self.publisher_cluster_cloud = publisher_cluster_cloud
-        self.min_points_cluster = 5
+
+        self.min_samples_in_cluster = min_samples_in_cluster
+        self.min_samples_to_be_core_point = min_samples_to_be_core_point
+        self.max_distance_to_consider_same_cluster = max_distance_to_consider_same_cluster
+        self.window_time_in_ms = window_time_in_ms
+        
         self.publishers_pose = []
         self.tracked_objects = []
         self.last_window_time_ms = -1
         self.last_update_time_ms = -1
-        self.max_alive = max_alive_without_measurements
-        self.max_distance = max_distance_to_consider_same_cluster
-        self.window_time_in_ms = window_time_in_ms
-
-        self.max_poses = 10
-
-        max_objects_tracked = 10
         self.windowed_points_first = True
 
-        for index in range(max_objects_tracked):
-            topic = publish_pose_topic_base+'/' + str(index)
-            pub = rospy.Publisher(
-                topic, PoseWithCovarianceStamped, queue_size=100)
-            self.publishers_pose.append(pub)
 
     def loop(self):
         current_time_ms = float(rospy.get_rostime().to_nsec())/1000000.0
@@ -123,21 +77,6 @@ class OpticsCluster(object):
                 self.processWindow(elapsed_in_ms)
                 self.last_window_time_ms = current_time_ms
                 self.windowed_points_first = True
-
-            for index in range(len(self.tracked_objects)):
-                (self.tracked_objects[index]).add_time(elapsed_in_ms)
-
-            self.tracked_objects = [i for i in self.tracked_objects if i.is_alive(self.max_alive)]
-
-            for index in range(len(self.tracked_objects)):
-                self.publish_pose(index, self.tracked_objects[index])
-
-
-
-    def publish_pose(self, index_tracked, tracked_object):
-        msg = tracked_object.get_pose_msg()
-        self.publishers_pose[index_tracked].publish(msg)
-
 
     def addSingleCloud(self, cloud: PointCloud2)-> None:
         for p in pc2.read_points(cloud, field_names=("x", "y", "z"), skip_nans=True):
@@ -154,8 +93,9 @@ class OpticsCluster(object):
             print("Len points: " + str(len(self.windowed_points)))
             if (len(self.windowed_points) >= self.min_points_cluster):
                     this_window_points = self.windowed_points
-                    model = OPTICS(min_samples=self.min_points_cluster,
-                                   min_cluster_size=0.05)
+                    model = OPTICS(min_samples=self.min_samples_to_be_core_point,
+                                   min_cluster_size=self.min_samples_in_cluster, 
+                                   max_eps=self.max_distance_to_consider_same_cluster)
                     pred = model.fit_predict(this_window_points)
 
                     space = np.arange(len(this_window_points))
@@ -200,40 +140,7 @@ class OpticsCluster(object):
                             if (i < len(colors)):
                                 rgb = colors[i]
                             pt = np.append(centroid_of_cluster, rgb)
-                            points_centroid_cloud.append(pt)
-
-                            if (i < self.max_poses):
-                                closer = -1
-                                if (len(self.tracked_objects) == 0):
-                                    self.tracked_objects.append(TrackedObject())
-                                    closer = 0
-                                else:
-                                    min_distance = 0
-                                    closer = -1
-                                    for i in range(len(self.tracked_objects)):
-                                        dist = np.linalg.norm(centroid_of_cluster-(self.tracked_objects[i]).get_centroid())
-                                        if (dist<= self.max_distance):
-                                            if (closer==-1):
-                                                min_distance = dist
-                                                closer = i
-                                            else:
-                                                if dist<=min_distance:
-                                                    closer = i
-                                                    min_distance= dist
-
-                                    if closer<0:
-                                        #No closer point, we add a new one
-                                        self.tracked_objects.append(TrackedObject())
-                                        closer = len(self.tracked_objects)-1
-
-                                cov = np.zeros(36)
-                                cov[0] = np.var(points_of_cluster[:, 0])
-                                cov[7] = np.var(points_of_cluster[:, 1])
-                                cov[14] = np.var(points_of_cluster[:, 2])
-
-                                (self.tracked_objects[closer]).update_position(centroid_of_cluster, cov)
-                                (self.tracked_objects[closer]).reset_time()
-
+                            points_centroid_cloud.append(pt)   
                     
                     print("Publish centroids")
                     centroids_cloud = pc2.create_cloud(
@@ -257,33 +164,33 @@ class OpticsCluster(object):
 
 if __name__ == "__main__":
 
-    rospy.init_node('OpticsCluster', anonymous=True)
+    rospy.init_node('OpticsClusterSimple', anonymous=True)
     rate = rospy.Rate(10)  # 10hz
 
     # Read parameters
     cloud_topic = rospy.get_param('~cloud_topic')
     publish_centroids_topic = rospy.get_param('~publish_centroids_topic')
     publish_cluster_topic = rospy.get_param('~publish_cluster_cloud_topic')
-    publish_pose_topic = rospy.get_param('~publish_pose_topic')
 
-    pub_centroids = rospy.Publisher(
-        publish_centroids_topic, PointCloud2, queue_size=100)
-    pub_cluster = rospy.Publisher(
-        publish_cluster_topic, PointCloud2, queue_size=100)
 
-    
-    min_points_cluster = 30
-    window_time_in_ms = 500
-    max_target_alive_time_in_ms = 1000
-    max_distance_same_cluster_in_m = 2
+    min_samples_in_cluster = int(rospy.get_param('~min_samples_in_cluster'))
+    min_samples_to_be_core_point = int(rospy.get_param('~min_samples_in_cluster'))
+    max_distance_to_consider_same_cluster = float(rospy.get_param('~min_samples_in_cluster'))
+    window_time_in_ms = int(rospy.get_param('~min_samples_in_cluster'))
 
-    opticsCluster = OpticsCluster(
-        pub_centroids, pub_cluster, publish_pose_topic, window_time_in_ms, min_points_cluster, max_target_alive_time_in_ms, max_distance_same_cluster_in_m)
 
-    rospy.Subscriber(cloud_topic, PointCloud2,
-                     opticsCluster.addSingleCloud)
+    pub_centroids = rospy.Publisher(publish_centroids_topic, PointCloud2, queue_size=100)
+    pub_cluster = rospy.Publisher(publish_cluster_topic, PointCloud2, queue_size=100)
 
-    print("=========== GTEC mmWave Optics Cluster ============")
+
+    opticsCluster = OpticsClusterSimple(
+        pub_centroids, pub_cluster, window_time_in_ms, min_samples_to_be_core_point, 
+                 min_samples_in_cluster,
+                 max_distance_to_consider_same_cluster)
+
+    rospy.Subscriber(cloud_topic, PointCloud2, opticsCluster.addSingleCloud)
+
+    print("=========== GTEC mmWave Optics Cluster Simple ============")
 
     # rospy.spin()
     while not rospy.is_shutdown():
