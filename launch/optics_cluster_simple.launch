@@ -1,16 +1,18 @@
 <launch>
-    <arg default="/gtec/mmwave/all/cartesian" name="cloud_topic"></arg>
+    <arg default="/gtec/mmwave/all/cartesian/corrected" name="cloud_topic"></arg>
     <arg default="/gtec/mmwave/cluster/optics" name="publish_cluster_cloud_topic"></arg>
-    <arg default="/gtec/mmwave/cluster/optics/centroids" name="publish_centroids_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/centroids" name="publish_centroids_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/optics/centroids" name="publish_own_centroids_topic"></arg>
 
-    <arg default="500" name="window_time_in_ms"></arg>
-    <arg default="5" name="min_samples_to_be_core_point"></arg>
-    <arg default="0.8" name="max_distance_to_consider_same_cluster"></arg>
-    <arg default="10" name="min_samples_in_cluster"></arg>
+    <arg default="400" name="window_time_in_ms"></arg>
+    <arg default="50" name="min_samples_to_be_core_point"></arg>
+    <arg default="2" name="max_distance_to_consider_same_cluster"></arg>
+    <arg default="100" name="min_samples_in_cluster"></arg>
 
     <node name="OpticsClusterSimple" output="screen" pkg="gtec_mmwave_cluster" type="optics_cluster_simple.py">
         <param name="cloud_topic" value="$(arg cloud_topic)"></param>
         <param name="publish_centroids_topic" value="$(arg publish_centroids_topic)"></param>
+        <param name="publish_own_centroids_topic" value="$(arg publish_own_centroids_topic)"></param>
         <param name="publish_cluster_cloud_topic" value="$(arg publish_cluster_cloud_topic)"></param>
 
         <param name="window_time_in_ms" value="$(arg window_time_in_ms)"></param>

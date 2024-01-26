@@ -1,0 +1,21 @@
+<launch>
+    <arg default="/gtec/mmwave/all/cartesian/corrected" name="cloud_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/dbscan" name="publish_cluster_cloud_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/centroids" name="publish_centroids_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/dbscan/centroids" name="publish_own_centroids_topic"></arg>
+
+    <arg default="300" name="window_time_in_ms"></arg>
+    <arg default="60" name="min_samples"></arg>
+    <arg default="1" name="cluster_epsilon"></arg>
+
+    <node name="DBScanCluster" output="screen" pkg="gtec_mmwave_cluster" type="dbscan_cluster.py">
+        <param name="cloud_topic" value="$(arg cloud_topic)"></param>
+        <param name="publish_centroids_topic" value="$(arg publish_centroids_topic)"></param>
+        <param name="publish_own_centroids_topic" value="$(arg publish_own_centroids_topic)"></param>
+        <param name="publish_cluster_cloud_topic" value="$(arg publish_cluster_cloud_topic)"></param>
+
+        <param name="window_time_in_ms" value="$(arg window_time_in_ms)"></param>
+        <param name="min_samples" value="$(arg min_samples)"></param>
+        <param name="cluster_epsilon" value="$(arg cluster_epsilon)"></param>
+    </node>
+</launch>

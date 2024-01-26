@@ -33,7 +33,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs.point_cloud2 as pc2
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import Header
-from sklearn.cluster import OPTICS, cluster_optics_dbscan
+from sklearn.cluster import OPTICS, cluster_optics_dbscan, DBSCAN
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,24 +42,23 @@ from scipy.spatial import distance
 
 
 
-class OpticsClusterSimple(object):
+class DBScanCluster(object):
 
     def __init__(self,
                  publisher_centroids_cloud,
                  publisher_own_centroids_cloud,
                  publisher_cluster_cloud,
-                 window_time_in_ms,
-                 min_samples_to_be_core_point, 
-                 min_samples_in_cluster,
-                 max_distance_to_consider_same_cluster
+                 cluster_epsilon, 
+                 min_samples,
+                 window_time_in_ms
                  ):
         self.publisher_centroids_cloud = publisher_centroids_cloud
         self.publisher_own_centroids_cloud = publisher_own_centroids_cloud
         self.publisher_cluster_cloud = publisher_cluster_cloud
 
-        self.min_samples_in_cluster = min_samples_in_cluster
-        self.min_samples_to_be_core_point = min_samples_to_be_core_point
-        self.max_distance_to_consider_same_cluster = max_distance_to_consider_same_cluster
+        self.cluster_epsilon = cluster_epsilon
+        self.min_samples = min_samples
+
         self.window_time_in_ms = window_time_in_ms
         
         self.publishers_pose = []
@@ -87,27 +86,21 @@ class OpticsClusterSimple(object):
     def addSingleCloud(self, cloud: PointCloud2)-> None:
         for p in pc2.read_points(cloud, field_names=("x", "y", "z"), skip_nans=True):
             if (self.windowed_points_first==True):
-                self.windowed_points = np.array([[p[0], p[1], 0]]) # XY only
+                #self.windowed_points = np.array([[p[0], p[1], p[2]]])
+                self.windowed_points = np.array([[p[0], p[1], 0]]) #ONLY XY
                 self.windowed_points_first = False
             else:
-                self.windowed_points = np.vstack(
-                    [self.windowed_points, [p[0], p[1], 0]]) #XY ONLY
+                #self.windowed_points = np.vstack([self.windowed_points, [p[0], p[1], p[2]]])
+                self.windowed_points = np.vstack([self.windowed_points, [p[0], p[1], 0]])#ONLY XY
 
 
     def processWindow(self, elapsed_time) -> None:
         if (self.windowed_points_first == False):
             #print("Len points: " + str(len(self.windowed_points)))
-            if (len(self.windowed_points) >= self.min_samples_in_cluster):
+            if (len(self.windowed_points) >= self.min_samples):
                 this_window_points = np.copy(self.windowed_points)
-                model = OPTICS(min_samples=self.min_samples_in_cluster,
-                                min_cluster_size=self.min_samples_to_be_core_point, 
-                                max_eps=self.max_distance_to_consider_same_cluster,
-                                metric='euclidean')
+                model = DBSCAN(eps=self.cluster_epsilon, min_samples=self.min_samples)
                 labels = model.fit_predict(this_window_points)
-    
-                #space = np.arange(len(this_window_points))
-                #reachability = model.reachability_[model.ordering_]
-                #labels = model.labels_[model.ordering_]
     
                 fields_cloud_centroid = [
                     PointField('x', 0, PointField.FLOAT32, 1),
@@ -148,15 +141,14 @@ class OpticsClusterSimple(object):
                 for i in range(len(clusters_ids)):
                     cluster_id = clusters_ids[i]
                     if float(cluster_id) > -1:
-                        #print("Cluster ID: ", str(cluster_id))
+                        print("Cluster ID: ", str(cluster_id))
                         points_of_cluster = this_window_points[labels == cluster_id]
                         
                         centroid_of_cluster = np.mean(
                             points_of_cluster, axis=0)
                             
-                        #print(f'Centroid of cluster {centroid_of_cluster}')
-                            
                         max_distance = np.array([np.max(distance.cdist(points_of_cluster, [centroid_of_cluster]))])
+                        print(f'Num. Points: {len(points_of_cluster)} Centroid of cluster {centroid_of_cluster} Max distance {max_distance}')
                         #print(f'max_distance {max_distance}')
                         #centroids[i] = centroid_of_cluster
                         rgb = [0, 0, 0]
@@ -189,7 +181,7 @@ class OpticsClusterSimple(object):
 
 if __name__ == "__main__":
 
-    rospy.init_node('OpticsClusterSimple', anonymous=True)
+    rospy.init_node('DBScanCluster', anonymous=True)
     rate = rospy.Rate(10)  # 10hz
 
     # Read parameters
@@ -198,11 +190,9 @@ if __name__ == "__main__":
     publish_own_centroids_topic = rospy.get_param('~publish_own_centroids_topic')
     publish_cluster_topic = rospy.get_param('~publish_cluster_cloud_topic')
 
-
-    min_samples_in_cluster = int(rospy.get_param('~min_samples_in_cluster'))
-    min_samples_to_be_core_point = int(rospy.get_param('~min_samples_to_be_core_point'))
-    max_distance_to_consider_same_cluster = float(rospy.get_param('~max_distance_to_consider_same_cluster'))
-    window_time_in_ms = int(rospy.get_param('~window_time_in_ms'))
+    cluster_epsilon = float(rospy.get_param('~cluster_epsilon', 0.5))
+    min_samples = int(rospy.get_param('~min_samples', 5))
+    window_time_in_ms = int(rospy.get_param('~window_time_in_ms',500))
 
 
     pub_centroids = rospy.Publisher(publish_centroids_topic, PointCloud2, queue_size=100)
@@ -210,14 +200,12 @@ if __name__ == "__main__":
     pub_cluster = rospy.Publisher(publish_cluster_topic, PointCloud2, queue_size=100)
 
 
-    opticsCluster = OpticsClusterSimple(
-        pub_centroids, pub_own_centroids, pub_cluster, window_time_in_ms, min_samples_to_be_core_point, 
-                 min_samples_in_cluster,
-                 max_distance_to_consider_same_cluster)
+    opticsCluster = DBScanCluster(
+        pub_centroids, pub_own_centroids, pub_cluster, cluster_epsilon, min_samples,window_time_in_ms)
 
     rospy.Subscriber(cloud_topic, PointCloud2, opticsCluster.addSingleCloud)
 
-    print("=========== GTEC mmWave Optics Cluster Simple ============")
+    print("=========== GTEC mmWave DBScan Cluster ============")
 
     # rospy.spin()
     while not rospy.is_shutdown():

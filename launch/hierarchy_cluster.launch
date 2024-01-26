@@ -1,0 +1,16 @@
+<launch>
+    <arg default="/gtec/mmwave/all/cartesian/corrected" name="cloud_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/centroids" name="publish_centroids_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/hc/centroids" name="publish_own_centroids_topic"></arg>
+
+    <arg default="1.5" name="cluster_threshold"></arg>
+    <arg default="500" name="window_time_in_ms"></arg>
+
+    <node name="HierarchyCluster" output="screen" pkg="gtec_mmwave_cluster" type="hierarchy_cluster.py">
+        <param name="cloud_topic" value="$(arg cloud_topic)"></param>
+        <param name="publish_centroids_topic" value="$(arg publish_centroids_topic)"></param>
+        <param name="publish_own_centroids_topic" value="$(arg publish_own_centroids_topic)"></param>
+        <param name="cluster_threshold" value="$(arg cluster_threshold)"></param>
+        <param name="window_time_in_ms" value="$(arg window_time_in_ms)"></param>
+    </node>
+</launch>

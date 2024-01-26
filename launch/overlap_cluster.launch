@@ -1,0 +1,15 @@
+<launch>
+    <arg default="/gtec/mmwave/cluster/overlap" name="publish_topic"></arg>
+    <arg default="/gtec/mmwave/cluster/centroids" name="subscribe_topic"></arg>
+
+    <arg default="500" name="window_time_in_ms"></arg>
+    <arg default="0.01" name="overlap_threshold"></arg>
+
+    <node name="OverlapCluster" output="screen" pkg="gtec_mmwave_cluster" type="overlap_cluster.py">
+        <param name="publish_topic" value="$(arg publish_topic)"></param>
+        <param name="subscribe_topic" value="$(arg subscribe_topic)"></param>
+
+        <param name="window_time_in_ms" value="$(arg window_time_in_ms)"></param>
+        <param name="overlap_threshold" value="$(arg overlap_threshold)"></param>
+    </node>
+</launch>
